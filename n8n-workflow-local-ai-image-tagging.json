@@ -1,0 +1,342 @@
+{
+  "name": "AI Image Tagging Qwen3.5 (Strict Spooler with Exif Fix)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "4af468ec-a02c-404f-b55a-ed4183f9ce8c",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1840,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "command": "find /files/ai-image/inbox -maxdepth 1 -type f -not -name '.*'"
+      },
+      "id": "66257150-63cc-4ed7-93df-9734588086eb",
+      "name": "List Inbox Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -1616,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || \"\";\nconst files = stdout.split('\\n').filter(p => p.trim() !== '');\n\n// If no files are found, stop the workflow here\nif (files.length === 0) return [];\n\n// Format items for the Loop node\nreturn files.map(f => ({\n  json: { \n    path: f, \n    filename: f.split('/').pop() \n  } \n}));"
+      },
+      "id": "9777766e-25c2-4319-82ba-14d534a4d807",
+      "name": "Format File List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "665ef2fe-814f-4de0-93b0-16fd5565f50c",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1184,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "03530cf9-1052-4a22-b39d-5f2461598302",
+      "name": "Read Image File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -944,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nif (item.binary && item.binary.data) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const base64Data = buffer.toString('base64');\n  const mimeType = item.binary.data.mimeType;\n  \n  item.json.base64Data = base64Data;\n  item.json.mimeType = mimeType;\n  item.binary.data.data = base64Data;\n  \n  return item;\n}\n\nthrow new Error('找不到圖片資料');"
+      },
+      "id": "daf940f9-8cf9-4c97-8160-a369d4da3806",
+      "name": "Convert to Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:1234/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"local-model\",\n  \"temperature\": 0.5,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Deliver a comma seperated words phrases to describe the content of this image: try including when, where, who and doing what activities. Only reply the descriptions and limit to 30 phrases, and nothing else.\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"data:{{ $json.mimeType }};base64,{{ $json.base64Data }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "90f55e64-7083-463f-86d4-f20f56c8c6a5",
+      "name": "LM Studio Vision AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -480,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -256,
+        656
+      ],
+      "id": "926668d5-c42f-4559-87db-715b39398259",
+      "name": "Merge AI and Image"
+    },
+    {
+      "parameters": {
+        "command": "rm -f /home/node/.n8n/storage/n8n-nodes-exif-data.exifData/*_exiftool_tmp"
+      },
+      "id": "0341ebef-7f1b-46bc-8a43-f843af6bbc9e",
+      "name": "Clean Exif Temp File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        224,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "exifMetadata": {
+          "metadataValues": [
+            {
+              "name": "ImageDescription",
+              "value": "={{ $json.choices[0].message.content.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim() }}"
+            },
+            {
+              "name": "Keywords",
+              "value": "={{ $json.choices[0].message.content.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ce612bee-f6ec-4b65-96bc-40e225cc31f3",
+      "name": "Write Exif Data",
+      "type": "n8n-nodes-exif-data.exifData",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/files/ai-image/done/{{ $('Loop Over Items').item.json.filename }}",
+        "options": {}
+      },
+      "id": "e8d69ed1-f54b-42b6-83d1-348fbdf00b0b",
+      "name": "Save to Done Folder",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        80,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=rm \"{{ $('Loop Over Items').item.json.path }}\""
+      },
+      "id": "d73817db-77e4-40ef-8456-55d76477c838",
+      "name": "Delete Original from Inbox",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        416,
+        656
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "List Inbox Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Inbox Files": {
+      "main": [
+        [
+          {
+            "node": "Format File List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format File List": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Read Image File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Image File": {
+      "main": [
+        [
+          {
+            "node": "Convert to Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Base64": {
+      "main": [
+        [
+          {
+            "node": "LM Studio Vision AI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge AI and Image",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "LM Studio Vision AI": {
+      "main": [
+        [
+          {
+            "node": "Merge AI and Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge AI and Image": {
+      "main": [
+        [
+          {
+            "node": "Write Exif Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Exif Temp File": {
+      "main": [
+        [
+          {
+            "node": "Delete Original from Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Exif Data": {
+      "main": [
+        [
+          {
+            "node": "Save to Done Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Done Folder": {
+      "main": [
+        [
+          {
+            "node": "Clean Exif Temp File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Original from Inbox": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c539ff62-ce7b-4b66-ab89-12141a7cbb30",
+  "meta": {
+    "instanceId": "222caa7ee9129b29f7f25a785ee7b52d53bbb49ade48dad1ec975498c4c2c188"
+  },
+  "id": "okrxXZGPEP1KCdTA",
+  "tags": []
+}
