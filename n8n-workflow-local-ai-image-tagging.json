@@ -1,5 +1,5 @@
 {
-  "name": "AI Image Tagging Qwen3.5 (Strict Spooler with Exif Fix)",
+  "name": "AI Image Tagging Qwen3.5 (vanilla exiftool)",
   "nodes": [
     {
       "parameters": {
@@ -12,52 +12,52 @@
           ]
         }
       },
-      "id": "4af468ec-a02c-404f-b55a-ed4183f9ce8c",
+      "id": "72b66222-e158-4a6e-9fed-110ecd5ec608",
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [
-        -1840,
-        656
+        -1856,
+        848
       ]
     },
     {
       "parameters": {
         "command": "find /files/ai-image/inbox -maxdepth 1 -type f -not -name '.*'"
       },
-      "id": "66257150-63cc-4ed7-93df-9734588086eb",
+      "id": "f4906cb8-6ecd-47b1-ab07-e4f49b940c96",
       "name": "List Inbox Files",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        -1616,
-        656
+        -1648,
+        848
       ]
     },
     {
       "parameters": {
         "jsCode": "const stdout = $input.first().json.stdout || \"\";\nconst files = stdout.split('\\n').filter(p => p.trim() !== '');\n\n// If no files are found, stop the workflow here\nif (files.length === 0) return [];\n\n// Format items for the Loop node\nreturn files.map(f => ({\n  json: { \n    path: f, \n    filename: f.split('/').pop() \n  } \n}));"
       },
-      "id": "9777766e-25c2-4319-82ba-14d534a4d807",
+      "id": "ae051af4-6001-4081-b0da-48a3375d559d",
       "name": "Format File List",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1408,
-        656
+        -1424,
+        848
       ]
     },
     {
       "parameters": {
         "options": {}
       },
-      "id": "665ef2fe-814f-4de0-93b0-16fd5565f50c",
+      "id": "faecd809-786c-47ae-bc4d-140624d1eeff",
       "name": "Loop Over Items",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -1184,
-        656
+        -1200,
+        848
       ]
     },
     {
@@ -65,26 +65,26 @@
         "fileSelector": "={{ $json.path }}",
         "options": {}
       },
-      "id": "03530cf9-1052-4a22-b39d-5f2461598302",
+      "id": "0bce23bc-eeae-4deb-bce3-4a28debe3dec",
       "name": "Read Image File",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        -944,
-        656
+        -976,
+        848
       ]
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\n\nif (item.binary && item.binary.data) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const base64Data = buffer.toString('base64');\n  const mimeType = item.binary.data.mimeType;\n  \n  item.json.base64Data = base64Data;\n  item.json.mimeType = mimeType;\n  item.binary.data.data = base64Data;\n  \n  return item;\n}\n\nthrow new Error('找不到圖片資料');"
+        "jsCode": "const item = $input.first();\n\nif (item.binary && item.binary.data) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const base64Data = buffer.toString('base64');\n  const mimeType = item.binary.data.mimeType;\n  \n  item.json.base64Data = base64Data;\n  item.json.mimeType = mimeType;\n  item.binary.data.data = base64Data;\n  \n  // 【終極解法】給予唯一的檔名，強制錯開 ExifTool 的暫存檔衝突\n  const uniqueId = Date.now();\n  item.binary.data.fileName = uniqueId + '_' + (item.json.filename || 'image.jpg');\n  \n  return item;\n}\n\nthrow new Error('找不到圖片資料');"
       },
-      "id": "daf940f9-8cf9-4c97-8160-a369d4da3806",
+      "id": "2a836c4a-c738-47ed-8a09-13f02bbba8c8",
       "name": "Convert to Base64",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -720,
-        656
+        -768,
+        848
       ]
     },
     {
@@ -96,95 +96,54 @@
         "jsonBody": "={\n  \"model\": \"local-model\",\n  \"temperature\": 0.5,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Deliver a comma seperated words phrases to describe the content of this image: try including when, where, who and doing what activities. Only reply the descriptions and limit to 30 phrases, and nothing else.\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"data:{{ $json.mimeType }};base64,{{ $json.base64Data }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
         "options": {}
       },
-      "id": "90f55e64-7083-463f-86d4-f20f56c8c6a5",
+      "id": "65aea740-d4f4-41fd-ad0e-ccdd6580bde1",
       "name": "LM Studio Vision AI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
         -480,
-        544
+        720
       ]
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineByPosition",
-        "options": {}
+        "jsCode": "let text = $input.first().json.choices[0].message.content || \"\";\n\n// 移除深度思考標籤與前後空白\ntext = text.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim();\n\n// 【安全防護】將單引號跳脫，防止 Bash 指令報錯或被注入\n// 例如將 It's 轉換為 It'\\''s\ntext = text.replace(/'/g, \"'\\\\''\");\n\nreturn { json: { cleanText: text } };"
       },
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
+      "id": "da9c1b60-54d8-452b-9ac6-22e0fac560b4",
+      "name": "Sanitize AI Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        -256,
-        656
-      ],
-      "id": "926668d5-c42f-4559-87db-715b39398259",
-      "name": "Merge AI and Image"
+        -160,
+        832
+      ]
     },
     {
       "parameters": {
-        "command": "rm -f /home/node/.n8n/storage/n8n-nodes-exif-data.exifData/*_exiftool_tmp"
+        "executeOnce": false,
+        "command": "=exiftool -overwrite_original -ImageDescription='{{ $json.cleanText }}' -Keywords='{{ $json.cleanText }}' \"{{ $('Loop Over Items').item.json.path }}\""
       },
-      "id": "0341ebef-7f1b-46bc-8a43-f843af6bbc9e",
-      "name": "Clean Exif Temp File",
+      "id": "e5dcc473-69bb-4748-bfe4-29c4a7c942fe",
+      "name": "Run ExifTool CLI",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        224,
-        656
+        64,
+        832
       ]
     },
     {
       "parameters": {
-        "operation": "write",
-        "exifMetadata": {
-          "metadataValues": [
-            {
-              "name": "ImageDescription",
-              "value": "={{ $json.choices[0].message.content.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim() }}"
-            },
-            {
-              "name": "Keywords",
-              "value": "={{ $json.choices[0].message.content.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim() }}"
-            }
-          ]
-        },
-        "options": {}
+        "executeOnce": false,
+        "command": "=mv \"{{ $('Loop Over Items').item.json.path }}\" \"/files/ai-image/done/{{ $('Loop Over Items').item.json.filename }}\""
       },
-      "id": "ce612bee-f6ec-4b65-96bc-40e225cc31f3",
-      "name": "Write Exif Data",
-      "type": "n8n-nodes-exif-data.exifData",
-      "typeVersion": 1,
-      "position": [
-        -80,
-        656
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "write",
-        "fileName": "=/files/ai-image/done/{{ $('Loop Over Items').item.json.filename }}",
-        "options": {}
-      },
-      "id": "e8d69ed1-f54b-42b6-83d1-348fbdf00b0b",
-      "name": "Save to Done Folder",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        80,
-        656
-      ]
-    },
-    {
-      "parameters": {
-        "command": "=rm \"{{ $('Loop Over Items').item.json.path }}\""
-      },
-      "id": "d73817db-77e4-40ef-8456-55d76477c838",
-      "name": "Delete Original from Inbox",
+      "id": "62cd7491-0bb2-440b-8601-c5c8045a9d0b",
+      "name": "Move File to Done",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        416,
-        656
+        288,
+        832
       ]
     }
   ],
@@ -253,11 +212,6 @@
             "node": "LM Studio Vision AI",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Merge AI and Image",
-            "type": "main",
-            "index": 1
           }
         ]
       ]
@@ -266,58 +220,36 @@
       "main": [
         [
           {
-            "node": "Merge AI and Image",
+            "node": "Sanitize AI Text",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Merge AI and Image": {
+    "Sanitize AI Text": {
       "main": [
         [
           {
-            "node": "Write Exif Data",
+            "node": "Run ExifTool CLI",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Clean Exif Temp File": {
+    "Run ExifTool CLI": {
       "main": [
         [
           {
-            "node": "Delete Original from Inbox",
+            "node": "Move File to Done",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Write Exif Data": {
-      "main": [
-        [
-          {
-            "node": "Save to Done Folder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save to Done Folder": {
-      "main": [
-        [
-          {
-            "node": "Clean Exif Temp File",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Delete Original from Inbox": {
+    "Move File to Done": {
       "main": [
         [
           {
@@ -331,12 +263,16 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Hong_Kong",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "versionId": "c539ff62-ce7b-4b66-ab89-12141a7cbb30",
+  "versionId": "b20f4a7a-3485-4bf1-bfaf-734b9667ffe9",
   "meta": {
     "instanceId": "222caa7ee9129b29f7f25a785ee7b52d53bbb49ade48dad1ec975498c4c2c188"
   },
-  "id": "okrxXZGPEP1KCdTA",
+  "id": "DIOL3KS248zDyGMU",
   "tags": []
 }
