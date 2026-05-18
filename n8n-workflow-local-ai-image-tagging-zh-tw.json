@@ -1,0 +1,278 @@
+{
+  "name": "AI Image Tagging Qwen3.5 (zh)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "56bfe664-6dca-41bf-af64-c0f69da2665e",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "command": "find /files/ai-image/inbox -maxdepth 1 -type f -not -name '.*'"
+      },
+      "id": "1346b680-786d-4a57-a44e-a00023df7cfd",
+      "name": "List Inbox Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -1648,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || \"\";\nconst files = stdout.split('\\n').filter(p => p.trim() !== '');\n\n// If no files are found, stop the workflow here\nif (files.length === 0) return [];\n\n// Format items for the Loop node\nreturn files.map(f => ({\n  json: { \n    path: f, \n    filename: f.split('/').pop() \n  } \n}));"
+      },
+      "id": "c358eaf8-8150-4ebc-8dad-e59ff6678c1b",
+      "name": "Format File List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1424,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "8879bb8f-07e5-497c-8f07-16f1a02ac925",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1200,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "dd7cbdc8-3eb9-4e05-97f8-d17e7a913330",
+      "name": "Read Image File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -976,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nif (item.binary && item.binary.data) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const base64Data = buffer.toString('base64');\n  const mimeType = item.binary.data.mimeType;\n  \n  item.json.base64Data = base64Data;\n  item.json.mimeType = mimeType;\n  item.binary.data.data = base64Data;\n  \n  // 【終極解法】給予唯一的檔名，強制錯開 ExifTool 的暫存檔衝突\n  const uniqueId = Date.now();\n  item.binary.data.fileName = uniqueId + '_' + (item.json.filename || 'image.jpg');\n  \n  return item;\n}\n\nthrow new Error('找不到圖片資料');"
+      },
+      "id": "909b7191-2465-419e-abe6-61d8b9f7d0e0",
+      "name": "Convert to Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -768,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:1234/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"local-model\",\n  \"temperature\": 0.5,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"Deliver a comma seperated words phrases to describe the content of this image: try including when, where, who and doing what activities. Only reply the descriptions and limit to 30 phrases, and nothing else.\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"data:{{ $json.mimeType }};base64,{{ $json.base64Data }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "2a31412c-e28f-4fda-b34d-a264a76810d0",
+      "name": "LM Studio Vision AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -480,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let text = $input.first().json.choices[0].message.content || \"\";\n\n// 移除深度思考標籤與前後空白\ntext = text.replace(/<think>[\\s\\S]*?<\\/think>/g, '').trim();\n\n// 【安全防護】將單引號跳脫，防止 Bash 指令報錯或被注入\n// 例如將 It's 轉換為 It'\\''s\ntext = text.replace(/'/g, \"'\\\\''\");\n\nreturn { json: { cleanText: text } };"
+      },
+      "id": "3ee01bc1-b1c6-41dc-b2f2-fa8f9b33fe51",
+      "name": "Sanitize AI Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=exiftool -overwrite_original -ImageDescription='{{ $json.cleanText }}' -Keywords='{{ $json.cleanText }}' \"{{ $('Loop Over Items').item.json.path }}\""
+      },
+      "id": "73e9c83e-05d9-428d-ad5a-f63525886ee2",
+      "name": "Run ExifTool CLI",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        64,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=mv \"{{ $('Loop Over Items').item.json.path }}\" \"/files/ai-image/done/{{ $('Loop Over Items').item.json.filename }}\""
+      },
+      "id": "4f68a079-9625-4fb8-8d51-6dc47c4805ff",
+      "name": "Move File to Done",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        288,
+        832
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "List Inbox Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Inbox Files": {
+      "main": [
+        [
+          {
+            "node": "Format File List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format File List": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Read Image File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Image File": {
+      "main": [
+        [
+          {
+            "node": "Convert to Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Base64": {
+      "main": [
+        [
+          {
+            "node": "LM Studio Vision AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LM Studio Vision AI": {
+      "main": [
+        [
+          {
+            "node": "Sanitize AI Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize AI Text": {
+      "main": [
+        [
+          {
+            "node": "Run ExifTool CLI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run ExifTool CLI": {
+      "main": [
+        [
+          {
+            "node": "Move File to Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move File to Done": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Hong_Kong",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "cf423259-a29f-4e7b-9916-098f35209f25",
+  "meta": {
+    "instanceId": "222caa7ee9129b29f7f25a785ee7b52d53bbb49ade48dad1ec975498c4c2c188"
+  },
+  "id": "16di01gaFwVDD2km",
+  "tags": []
+}
